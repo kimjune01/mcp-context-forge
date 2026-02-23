@@ -4716,6 +4716,11 @@ async def _admin_logout(request: Request) -> Response:
 
     # Always clear local JWT session cookie.
     clear_auth_cookie(response)
+    
+    # Clear CSRF token cookie
+    from mcpgateway.services.csrf_service import clear_csrf_cookie
+    clear_csrf_cookie(response, settings)
+    
     use_secure = (settings.environment == "production") or settings.secure_cookies
     response.delete_cookie(
         key="sso_id_token_hint",
