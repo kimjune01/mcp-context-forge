@@ -26,9 +26,7 @@ import socket
 # Third-Party
 import pytest
 import redis
-
-# First-Party
-from mcpgateway.plugins.framework.loader.config import ConfigLoader
+from cpex.framework import ConfigLoader
 
 # Anchor the plugins/config.yaml path to this file's location so the test
 # works regardless of where pytest is invoked from (repo root, tests/, etc.).
