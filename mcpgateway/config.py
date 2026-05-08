@@ -2,7 +2,7 @@
 """Location: ./mcpgateway/config.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti, Manav Gupta
+Authors: Mihai Criveti, Manav Gupta, Eleni Kechrioti
 
 ContextForge AI Gateway Configuration.
 This module defines configuration settings for ContextForge AI Gateway using Pydantic.
@@ -51,6 +51,7 @@ Examples:
 from functools import lru_cache
 from importlib.resources import files
 import logging
+import math
 import os
 from pathlib import Path
 import re
@@ -92,8 +93,12 @@ def _normalize_env_list_vars() -> None:
         "SSO_GITHUB_ADMIN_ORGS",
         "SSO_GOOGLE_ADMIN_DOMAINS",
         "SSO_ENTRA_ADMIN_GROUPS",
+        "SSO_GENERIC_ADMIN_GROUPS",
         "LOG_DETAILED_SKIP_ENDPOINTS",
         "CONTENT_ALLOWED_RESOURCE_MIMETYPES",
+        "SIEM_EXPORT_EVENT_SOURCES",
+        "SIEM_EXPORT_URL_ALLOWLIST",
+        "SIEM_EXPORT_REDACT_FIELDS",
     ]
     for key in keys:
         raw = os.environ.get(key)
@@ -155,6 +160,26 @@ UI_HIDE_SECTION_ALIASES = {
     "api_tokens": "tokens",
     "llm-settings": "settings",
 }
+
+
+class SecurityConfigurationError(Exception):
+    """Exception for critical security configuration issues."""
+
+
+def calculate_entropy(text: str) -> float:
+    """
+        Calculate Shannon entropy to detect low-randomness secrets.
+
+        Args:
+            text (str): The secret string to evaluate.
+
+        Returns:
+            float: The calculated entropy score.
+        """
+    if not text:
+        return 0.0
+    probabilities = [text.count(c) / len(text) for c in set(text)]
+    return -sum(p * math.log2(p) for p in probabilities)
 
 
 class Settings(BaseSettings):
@@ -360,11 +385,9 @@ class Settings(BaseSettings):
         # RFC 7230 token = 1*tchar; tchar = "!" / "#" / "$" / "%" / "&" / "'"
         # / "*" / "+" / "-" / "." / "^" / "_" / "`" / "|" / "~" / DIGIT / ALPHA
         if not re.fullmatch(r"[A-Za-z0-9!#$%&'*+\-.^_`|~]+", cleaned):
-            raise ValueError(
-                f"AUTH_HEADER_NAME '{v}' is not a valid HTTP header token "
-                "(RFC 7230). Use only ASCII letters, digits, and !#$%&'*+-.^_`|~."
-            )
+            raise ValueError(f"AUTH_HEADER_NAME '{v}' is not a valid HTTP header token " "(RFC 7230). Use only ASCII letters, digits, and !#$%&'*+-.^_`|~.")
         return cleaned
+
     basic_auth_user: str = "admin"
     basic_auth_password: SecretStr = Field(default=SecretStr("changeme"))
     jwt_algorithm: str = "HS256"
@@ -464,7 +487,7 @@ class Settings(BaseSettings):
     )
     tool_description_forbidden_patterns_enabled: bool = Field(default=True, description="Enable forbidden pattern validation on tool descriptions. Set to false to disable all checks.")
     tool_description_forbidden_patterns: List[str] = Field(
-        default_factory=lambda: ["&&", "||", "$(", "> ", "< "],
+        default_factory=lambda: ["&&", "||", "$("],
         description='Substrings forbidden in tool descriptions. Override via TOOL_DESCRIPTION_FORBIDDEN_PATTERNS env var as a JSON array, e.g. \'["&&","||"]\'.',
     )
 
@@ -503,7 +526,14 @@ class Settings(BaseSettings):
     sso_generic_userinfo_url: Optional[str] = Field(default=None, description="Userinfo endpoint URL")
     sso_generic_issuer: Optional[str] = Field(default=None, description="OIDC issuer URL")
     sso_generic_jwks_uri: Optional[str] = Field(default=None, description="OIDC JWKS endpoint URL for token signature verification")
+
     sso_generic_scope: Optional[str] = Field(default="openid profile email", description="OAuth scopes (space-separated)")
+
+    sso_generic_groups_claim: str = Field(default="groups", description="JWT claim for Generic OIDC groups (groups/roles/custom)")
+    sso_generic_admin_groups: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Generic OIDC groups granting platform_admin role (CSV/JSON)")
+    sso_generic_role_mappings: Dict[str, str] = Field(default_factory=dict, description="Map Generic OIDC groups to ContextForge roles (JSON: {group_id: role_name})")
+    sso_generic_default_role: Optional[str] = Field(default=None, description="Default role for Generic OIDC users without group mapping (None = no role assigned)")
+    sso_generic_sync_roles_on_login: bool = Field(default=True, description="Synchronize role assignments on each login for Generic OIDC")
 
     # SSO Settings
     sso_auto_create_users: bool = Field(default=True, description="Automatically create users from SSO providers")
@@ -557,11 +587,11 @@ class Settings(BaseSettings):
     # Query Parameter Authentication (INSECURE - disabled by default)
     insecure_allow_queryparam_auth: bool = Field(
         default=False,
-        description=("Enable query parameter authentication for gateway peers. " "WARNING: API keys may appear in proxy logs. See CWE-598."),
+        description=("Enable query parameter authentication for gateway peers. WARNING: API keys may appear in proxy logs. See CWE-598."),
     )
     insecure_queryparam_auth_allowed_hosts: List[str] = Field(
         default_factory=list,
-        description=("Allowlist of hosts permitted to use query parameter auth. " "Empty list allows any host when feature is enabled. " "Format: ['mcp.tavily.com', 'api.example.com']"),
+        description=("Allowlist of hosts permitted to use query parameter auth. Empty list allows any host when feature is enabled. Format: ['mcp.tavily.com', 'api.example.com']"),
     )
 
     # ===================================
@@ -616,7 +646,7 @@ class Settings(BaseSettings):
             "fe80::/10",  # IPv6 link-local
         ],
         description=(
-            "CIDR ranges to block for SSRF protection. These are ALWAYS blocked regardless of other settings. " "Default blocks cloud metadata endpoints. Add private ranges for stricter security."
+            "CIDR ranges to block for SSRF protection. These are ALWAYS blocked regardless of other settings. Default blocks cloud metadata endpoints. Add private ranges for stricter security."
         ),
     )
 
@@ -970,7 +1000,10 @@ class Settings(BaseSettings):
     # Security validation thresholds
     min_secret_length: int = 32
     min_password_length: int = 12
-    require_strong_secrets: bool = False  # Default to False for backward compatibility, will be enforced in 1.0.0
+    require_strong_secrets: bool = Field(
+        default=False,
+        description="Enforces strong secret validation. Defaults to True in production, False in development for ease of testing. When enabled, secrets are checked against a list of weak values and must meet minimum length and entropy requirements.",
+    )
 
     llmchat_enabled: bool = Field(default=True, description="Enable LLM Chat feature")
     mcpgateway_stdio_transport_enabled: bool = Field(
@@ -994,10 +1027,37 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Values used to detect unconfigured or insecure deployment states
+    SENTINEL_VALUES: ClassVar[list[str]] = ["", "UNCONFIGURED"]
+    WEAK_VALUES: ClassVar[list[str]] = [
+        "my-test-key",
+        "my-test-key-but-now-longer-than-32-bytes",
+        "my-test-salt",
+        "changeme",
+        "secret",
+        "password",
+        "test-secret",
+        "my-secret",
+        "12345678",
+    ]
+
     # database-backed polling settings for session message delivery
     poll_interval: float = Field(default=1.0, description="Initial polling interval in seconds for checking new session messages")
     max_interval: float = Field(default=5.0, description="Maximum polling interval in seconds when the session is idle")
     backoff_factor: float = Field(default=1.5, description="Multiplier used to gradually increase the polling interval during inactivity")
+
+    @model_validator(mode="before")
+    @classmethod
+    def apply_environment_aware_defaults(cls, data: Any) -> Any:
+        """Apply defaults that depend on other settings values."""
+        if not isinstance(data, dict):
+            return data
+
+        values: dict[str, Any] = dict(data)
+        if "require_strong_secrets" not in values:
+            environment = str(values.get("environment", "development")).lower()
+            values["require_strong_secrets"] = environment == "production"
+        return values
 
     # redis configurations for Maintaining Chat Sessions in multi-worker environment
     llmchat_session_ttl: int = Field(default=300, description="Seconds for active_session key TTL")
@@ -1258,6 +1318,10 @@ class Settings(BaseSettings):
     class SecurityStatus(TypedDict):
         """TypedDict for comprehensive security status."""
 
+        status: str  # SUCCESS, FAIL, or WARN
+        code: Optional[str]  # e.g., ERR_MISSING_CONFIG
+        message: str
+        remediation: Optional[str]  # Instructions to fix the issue
         secure_secrets: bool
         auth_enabled: bool
         ssl_verification: bool
@@ -1268,18 +1332,64 @@ class Settings(BaseSettings):
         security_score: int
 
     def get_security_status(self) -> SecurityStatus:
-        """Get comprehensive security status.
+        """Get comprehensive security status and enforces fail-closed logic in production.
 
         Returns:
             SecurityStatus: Dictionary containing security status information including score and warnings.
         """
 
+        if self.client_mode:
+            return {
+                "status": "SUCCESS",
+                "code": None,
+                "message": "Security validation skipped in client mode.",
+                "remediation": None,
+                "secure_secrets": True,
+                "auth_enabled": self.auth_required,
+                "ssl_verification": not self.skip_ssl_verify,
+                "debug_disabled": not self.debug,
+                "cors_restricted": "*" not in self.allowed_origins if self.cors_enabled else True,
+                "ui_protected": not self.mcpgateway_ui_enabled or self.auth_required,
+                "warnings": [],
+                "security_score": 100,
+            }
+
+        is_prod = self.environment == "production"
+        remediation_cmd = "Run 'python3 -m mcpgateway.scripts.init_secrets' to generate secure keys."
+
+        # Evaluate specific critical secrets
+        critical_secrets = {
+            "JWT_SECRET_KEY": self.jwt_secret_key.get_secret_value(),
+            "AUTH_ENCRYPTION_SECRET": self.auth_encryption_secret.get_secret_value(),
+            "BASIC_AUTH_PASSWORD": self.basic_auth_password.get_secret_value()
+        }
+
+        for name, value in critical_secrets.items():
+            if name == "BASIC_AUTH_PASSWORD" and not (self.mcpgateway_ui_enabled or self.api_allow_basic_auth or self.docs_allow_basic_auth):
+                continue
+            is_sentinel = value in self.SENTINEL_VALUES
+            is_weak = value.lower() in self.WEAK_VALUES or calculate_entropy(value) < 3.5
+            # Check for empty or "UNCONFIGURED" values
+            if is_sentinel:
+                error_msg = f"{name} is not configured. Running with default or empty values in production is prohibited as it leaves the gateway unprotected."
+                if is_prod:
+                    return self._build_security_response("FAIL", "ERR_MISSING_CONFIG", error_msg, remediation_cmd)
+                logger.warning(f"DEV WARNING: {error_msg} {remediation_cmd}")
+
+            # Check for known weak values
+            if self.require_strong_secrets and is_weak:
+                error_msg = f"Weak {name} detected. Using default values in production exposes the gateway to unauthorized access."
+                return self._build_security_response("FAIL", "ERR_WEAK_SECRET", error_msg, remediation_cmd)
+
         # Compute a security score: 100 minus 10 for each warning
         security_score = max(0, 100 - 10 * len(self.get_security_warnings()))
 
         return {
-            "secure_secrets": (self.jwt_secret_key.get_secret_value() if isinstance(self.jwt_secret_key, SecretStr) else self.jwt_secret_key)
-            not in ("my-test-key", "my-test-key-but-now-longer-than-32-bytes"),  # nosec B105 - checking for default values
+            "status": "SUCCESS",
+            "code": None,
+            "message": "Security validation passed.",
+            "remediation": None,
+            "secure_secrets": self.jwt_secret_key.get_secret_value() not in self.WEAK_VALUES,
             "auth_enabled": self.auth_required,
             "ssl_verification": not self.skip_ssl_verify,
             "debug_disabled": not self.debug,
@@ -1287,6 +1397,53 @@ class Settings(BaseSettings):
             "ui_protected": not self.mcpgateway_ui_enabled or self.auth_required,
             "warnings": self.get_security_warnings(),
             "security_score": security_score,
+        }
+
+    def log_critical_issues(self, status: SecurityStatus) -> None:
+        """
+        Logs critical security issues and provides remediation steps.
+
+        Args:
+            status (SecurityStatus): The security status dictionary to log.
+        """
+        if status["status"] == "FAIL":
+            # [Requirement]: Explain specific risk
+            logger.critical(f"[SECURITY FATAL] {status['message']}")
+
+            # [Requirement]: Include generation command
+            if status["remediation"]:
+                logger.info(f"REMEDIATION: {status['remediation']}")
+
+            # [Requirement]: Reference documentation
+            logger.info("REFERENCE: For full security configuration guide, see: https://github.com/IBM/mcp-context-forge/blob/main/docs/docs/operations/config-validation.md")
+
+    def _build_security_response(self, status: str, code: str, msg: str, remediation: str) -> SecurityStatus:
+        """
+        Helper to build a failure response for get_security_status.
+
+        Args:
+            status (str): The overall security status (e.g., "FAIL").
+            code (str): The specific error code.
+            msg (str): The error description.
+            remediation (str): The suggested fix for the user.
+
+        Returns:
+            SecurityStatus: A dictionary containing the structured security response.
+        """
+        logger.error(f"[{code}] CRITICAL SECURITY ISSUE: {msg}")
+        return {
+            "status": status,
+            "code": code,
+            "message": f"{msg} (Code: {code})",
+            "remediation": remediation,
+            "secure_secrets": False,
+            "auth_enabled": self.auth_required,
+            "ssl_verification": not self.skip_ssl_verify,
+            "debug_disabled": not self.debug,
+            "cors_restricted": False,
+            "ui_protected": False,
+            "warnings": [msg],
+            "security_score": 0,
         }
 
     # Max retries for HTTP requests
@@ -1302,7 +1459,7 @@ class Settings(BaseSettings):
         default=200,
         ge=10,
         le=1000,
-        description="Maximum total concurrent HTTP connections (global, not per-host). " "Increase for high-traffic deployments with many outbound calls.",
+        description="Maximum total concurrent HTTP connections (global, not per-host). Increase for high-traffic deployments with many outbound calls.",
     )
     httpx_max_keepalive_connections: int = Field(
         default=100,
@@ -1348,7 +1505,7 @@ class Settings(BaseSettings):
         default=30.0,
         ge=1.0,
         le=120.0,
-        description="Read timeout for admin UI operations (model fetching, health checks). " "Shorter than httpx_read_timeout to fail fast on admin pages.",
+        description="Read timeout for admin UI operations (model fetching, health checks). Shorter than httpx_read_timeout to fail fast on admin pages.",
     )
 
     @field_validator("allowed_origins", mode="before")
@@ -1545,6 +1702,29 @@ class Settings(BaseSettings):
     security_threat_score_alert: float = Field(default=0.7, description="Threat score threshold for alerts (0.0-1.0)")
     security_rate_limit_window_minutes: int = Field(default=5, description="Time window for rate limit checks (minutes)")
 
+    # SIEM Export Configuration
+    # SIEM export can run independently of DB-backed security/audit logging.
+    siem_export_enabled: bool = Field(default=False, description="Enable asynchronous SIEM export pipeline")
+    siem_export_batch_size: int = Field(default=100, ge=1, le=1000, description="Maximum events per export batch")
+    siem_export_flush_interval_seconds: int = Field(default=5, ge=1, le=60, description="Queue poll/flush interval in seconds")
+    siem_export_queue_max_size: int = Field(default=10000, ge=100, le=1000000, description="Maximum queue length before backpressure handling")
+    siem_export_max_retries: int = Field(default=10, ge=0, le=50, description="Maximum retries before dead-letter queue")
+    siem_export_backoff_max_seconds: int = Field(default=60, ge=1, le=3600, description="Maximum retry backoff in seconds")
+    siem_export_backpressure_policy: Literal["drop_oldest", "block_producer"] = Field(
+        default="drop_oldest",
+        description="Backpressure mode when queue is full: drop_oldest or block_producer",
+    )
+    siem_export_event_sources: List[str] = Field(default_factory=lambda: ["auth", "security", "audit"], description="Event sources enabled for SIEM export")
+    siem_export_stream_name: str = Field(default="mcpgateway:siem:events", description="Redis Stream name for SIEM events")
+    siem_export_consumer_group: str = Field(default="siem-exporters", description="Redis consumer group name for SIEM workers")
+    siem_export_url_allowlist: List[str] = Field(default_factory=list, description="Optional outbound destination URL allowlist (hostnames or URL prefixes)")
+    siem_export_redact_fields: List[str] = Field(
+        default_factory=lambda: ["user_email", "authorization", "token", "password", "secret", "api_key"],
+        description="Fields to redact before exporting events",
+    )
+    siem_destinations: List[Dict[str, Any]] = Field(default_factory=list, description="SIEM destination configuration (JSON list)")
+    siem_destinations_file: Optional[str] = Field(default=None, description="Optional JSON/YAML file path containing SIEM destination configuration")
+
     # API Token Tracking Configuration
     # Controls how token usage and last_used timestamps are tracked
     token_usage_logging_enabled: bool = Field(default=True, description="Enable API token usage logging middleware")
@@ -1650,6 +1830,123 @@ class Settings(BaseSettings):
     syslog_port: int = Field(default=514, description="Syslog server port")
     webhook_logging_enabled: bool = Field(default=False, description="Send logs to webhook endpoints")
     webhook_logging_urls: List[str] = Field(default_factory=list, description="Webhook URLs for log delivery")
+
+    @field_validator("siem_destinations", mode="before")
+    @classmethod
+    def parse_siem_destinations(cls, value: Any) -> List[Dict[str, Any]]:
+        """Parse SIEM destination config from JSON/YAML strings.
+
+        Supports:
+        - JSON list string
+        - JSON object with `destinations` key
+        - YAML string with `destinations` key
+
+        Args:
+            value: Raw destination config value from environment/settings source.
+
+        Returns:
+            List[Dict[str, Any]]: Normalized destination definitions.
+        """
+        if value is None:
+            return []
+
+        if isinstance(value, list):
+            return [dict(item) for item in value if isinstance(item, dict)]
+
+        if isinstance(value, dict):
+            if isinstance(value.get("destinations"), list):
+                return [dict(item) for item in value["destinations"] if isinstance(item, dict)]
+            return []
+
+        if not isinstance(value, str):
+            return []
+
+        raw = value.strip()
+        if not raw:
+            return []
+
+        # First, try JSON parsing.
+        try:
+            parsed = orjson.loads(raw)
+            if isinstance(parsed, list):
+                return [dict(item) for item in parsed if isinstance(item, dict)]
+            if isinstance(parsed, dict):
+                if isinstance(parsed.get("destinations"), list):
+                    return [dict(item) for item in parsed["destinations"] if isinstance(item, dict)]
+                siem_export = parsed.get("siem_export")
+                if isinstance(siem_export, dict) and isinstance(siem_export.get("destinations"), list):
+                    return [dict(item) for item in siem_export["destinations"] if isinstance(item, dict)]
+            return []
+        except Exception as exc:
+            logger.debug("Failed to parse SIEM destinations as JSON: %s", exc)
+
+        # Then try YAML parsing for convenience.
+        try:
+            # Third-Party
+            import yaml  # pylint: disable=import-outside-toplevel
+
+            parsed_yaml = yaml.safe_load(raw)
+            if isinstance(parsed_yaml, list):
+                return [dict(item) for item in parsed_yaml if isinstance(item, dict)]
+            if isinstance(parsed_yaml, dict):
+                if isinstance(parsed_yaml.get("destinations"), list):
+                    return [dict(item) for item in parsed_yaml["destinations"] if isinstance(item, dict)]
+                siem_export = parsed_yaml.get("siem_export")
+                if isinstance(siem_export, dict) and isinstance(siem_export.get("destinations"), list):
+                    return [dict(item) for item in siem_export["destinations"] if isinstance(item, dict)]
+        except Exception as exc:
+            logger.debug("Failed to parse SIEM destinations as YAML: %s", exc)
+
+        return []
+
+    @field_validator("siem_export_url_allowlist")
+    @classmethod
+    def validate_siem_url_allowlist(cls, v: List[str]) -> List[str]:
+        """Reject trivially-permissive allowlist entries and warn on empty allowlist."""
+        validated = []
+        for entry in v:
+            entry = entry.strip()
+            if not entry:
+                continue
+            # Reject bare protocol prefixes that match everything (e.g., "https://", "http://")
+            if re.match(r"^https?:///?$", entry):
+                logger.warning("SIEM URL allowlist entry '%s' is a bare protocol prefix that matches all URLs — rejecting", entry)
+                continue
+            # Reject entries with :// but no hostname (e.g., "https:///")
+            if "://" in entry:
+                parsed = urlparse(entry)
+                if not parsed.hostname:
+                    logger.warning("SIEM URL allowlist entry '%s' has no hostname — rejecting", entry)
+                    continue
+            validated.append(entry)
+
+        if not validated:
+            logger.info("SIEM URL allowlist is empty — all outbound destination URLs are permitted")
+        return validated
+
+    @model_validator(mode="after")
+    def load_siem_destinations_from_file(self) -> Self:
+        """Load SIEM destinations from optional JSON/YAML config file.
+
+        Returns:
+            Self: Updated settings instance.
+        """
+        if self.siem_destinations or not self.siem_destinations_file:
+            return self
+
+        try:
+            config_path = Path(self.siem_destinations_file).expanduser()
+            if not config_path.exists():
+                logger.warning("SIEM destinations file not found: %s", config_path)
+                return self
+
+            content = config_path.read_text(encoding="utf-8")
+            parsed = self.parse_siem_destinations(content)
+            self.siem_destinations = parsed
+        except Exception as exc:  # pragma: no cover - defensive config loading
+            logger.warning("Failed loading SIEM destinations file '%s': %s", self.siem_destinations_file, exc)
+
+        return self
 
     @field_validator("log_level", mode="before")
     @classmethod
@@ -2331,6 +2628,7 @@ Disallow: /
     # -------------------------------
     @field_validator(
         "sso_entra_admin_groups",
+        "sso_generic_admin_groups",
         "sso_trusted_domains",
         "sso_auto_admin_domains",
         "sso_github_admin_orgs",
@@ -2648,6 +2946,7 @@ Disallow: /
 
     # MCP-compliant size limits (configurable via env)
     validation_max_name_length: int = 255
+    validation_max_tool_name_length: int = 128  # MCP spec SHOULD limit for tool names
     validation_max_description_length: int = 8192  # 8KB
     validation_max_template_length: int = 65536  # 64KB
     validation_max_content_length: int = 1048576  # 1MB
@@ -2916,6 +3215,9 @@ def get_settings(**kwargs: Any) -> Settings:
     Returns:
         Settings: A cached instance of the Settings class.
 
+    Raises:
+        SecurityConfigurationError: If critical security checks fail in production.
+
     Examples:
         >>> settings = get_settings()
         >>> isinstance(settings, Settings)
@@ -2933,6 +3235,13 @@ def get_settings(**kwargs: Any) -> Settings:
     cfg.validate_transport()
     # Ensure sqlite DB directories exist if needed.
     cfg.validate_database()
+    # Get the status (SUCCESS/FAIL) based on sentinel and weak values
+    security_status = cfg.get_security_status()
+
+    if security_status["status"] == "FAIL":
+        # Log the critical issues (remediation, risk, documentation)
+        cfg.log_critical_issues(security_status)
+        raise SecurityConfigurationError(security_status["message"])
     # Return the one-and-only Settings instance (cached).
     return cfg
 

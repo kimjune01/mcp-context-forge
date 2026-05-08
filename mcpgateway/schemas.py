@@ -1518,6 +1518,7 @@ class ToolRead(BaseModelWithConfigDict):
     enabled: bool
     reachable: bool
     gateway_id: Optional[str]
+    grpc_service_id: Optional[str] = Field(None, description="ID of the gRPC service this tool was discovered from")
     execution_count: Optional[int] = Field(None)
     metrics: Optional[ToolMetrics] = Field(None)
     name: str
@@ -3524,6 +3525,9 @@ class GatewayRead(BaseModelWithConfigDict):
 
     # Tool count (populated from the tools relationship; 0 when not loaded)
     tool_count: int = Field(default=0, description="Number of tools registered for this gateway")
+
+    # Tools skipped during gateway import due to validation errors (transient, not persisted)
+    skipped_tools: List[str] = Field(default_factory=list, description="Tools skipped during gateway import due to validation errors")
 
     @model_validator(mode="before")
     @classmethod
