@@ -360,11 +360,9 @@ class Settings(BaseSettings):
         # RFC 7230 token = 1*tchar; tchar = "!" / "#" / "$" / "%" / "&" / "'"
         # / "*" / "+" / "-" / "." / "^" / "_" / "`" / "|" / "~" / DIGIT / ALPHA
         if not re.fullmatch(r"[A-Za-z0-9!#$%&'*+\-.^_`|~]+", cleaned):
-            raise ValueError(
-                f"AUTH_HEADER_NAME '{v}' is not a valid HTTP header token "
-                "(RFC 7230). Use only ASCII letters, digits, and !#$%&'*+-.^_`|~."
-            )
+            raise ValueError(f"AUTH_HEADER_NAME '{v}' is not a valid HTTP header token " "(RFC 7230). Use only ASCII letters, digits, and !#$%&'*+-.^_`|~.")
         return cleaned
+
     basic_auth_user: str = "admin"
     basic_auth_password: SecretStr = Field(default=SecretStr("changeme"))
     jwt_algorithm: str = "HS256"
