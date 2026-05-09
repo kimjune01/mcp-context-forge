@@ -58,7 +58,7 @@ async def enforce_fetch_tools_csrf(request: Request) -> None:
     if separator and scheme.lower() == "bearer" and token.strip():
         return
 
-    # Same-origin check: require Origin or Referer to match app domain
+    # Same-origin check: require Origin or Referer to match app domain (fail-closed)
     origin = request.headers.get("origin")
     referer = request.headers.get("referer")
     candidate = origin
@@ -69,16 +69,20 @@ async def enforce_fetch_tools_csrf(request: Request) -> None:
                 candidate = f"{parsed.scheme}://{parsed.netloc}"
         except Exception:
             candidate = None
-    if candidate:
-        app_domain = str(settings.app_domain)
-        parsed_app = urlparse(app_domain)
-        app_origin = f"{parsed_app.scheme}://{parsed_app.netloc}"
-        allowed = {app_origin}
-        allowed.update(settings.csrf_trusted_origins)
-        if candidate not in allowed:
-            raise HTTPException(status_code=403, detail="CSRF validation failed")
-    # If no Origin/Referer, fall through to cookie check (callback flow)
 
+    if not candidate:
+        # Fail closed: missing Origin/Referer is not allowed for state-changing requests
+        raise HTTPException(status_code=403, detail="CSRF validation failed")
+
+    app_domain = str(settings.app_domain)
+    parsed_app = urlparse(app_domain)
+    app_origin = f"{parsed_app.scheme}://{parsed_app.netloc}"
+    allowed = {app_origin}
+    allowed.update(settings.csrf_trusted_origins)
+    if candidate not in allowed:
+        raise HTTPException(status_code=403, detail="CSRF validation failed")
+
+    # Double-submit cookie check
     csrf_cookie = request.cookies.get(ADMIN_CSRF_COOKIE_NAME)
     csrf_header = request.headers.get(ADMIN_CSRF_HEADER_NAME)
     if not isinstance(csrf_cookie, str) or not csrf_cookie or not isinstance(csrf_header, str) or not csrf_header:

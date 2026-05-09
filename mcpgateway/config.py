@@ -442,11 +442,11 @@ class Settings(BaseSettings):
             "/auth/email/register",
             "/auth/email/forgot-password",
             "/auth/email/reset-password",
-            "/admin",  # Admin routes protected by per-route enforce_admin_csrf dependency
+            "/admin",  # Exempt: all admin routes use per-route enforce_admin_csrf dependency
             "/admin/login",
             "/admin/forgot-password",
             "/admin/reset-password",
-            "/oauth/fetch-tools",  # OAuth callback flow uses its own CSRF check
+            "/oauth/fetch-tools",  # Exempt: OAuth callback uses enforce_fetch_tools_csrf with origin+double-submit
             "/docs",
             "/redoc",
             "/openapi.json",
