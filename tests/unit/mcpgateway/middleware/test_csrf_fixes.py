@@ -307,6 +307,9 @@ async def test_token_rotation_on_login():
         mock_user.email_verified = True
         mock_user.password_change_required = False
         mock_user.is_email_verified = Mock(return_value=True)
+        mock_user.is_account_locked = Mock(return_value=False)
+        mock_user.failed_login_attempts = 0
+        mock_user.locked_until = None
 
         mock_auth_service = Mock()
         mock_auth_service.authenticate_user = AsyncMock(return_value=mock_user)

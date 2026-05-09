@@ -22,12 +22,22 @@ from starlette.responses import JSONResponse, Response
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.services.csrf_service import get_csrf_service
-from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
+from mcpgateway.utils.verify_credentials import get_auth_header_value, verify_jwt_token_cached
 
 logger = logging.getLogger(__name__)
 
 # Safe HTTP methods that don't require CSRF protection
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
+ADMIN_CSRF_COOKIE_NAME = "mcpgateway_csrf_token"
+ADMIN_CSRF_HEADER_NAME = "x-csrf-token"
+
+
+def _extract_bearer_token(auth_header: str) -> str | None:
+    """Return a bearer token from an auth header, accepting scheme case-insensitively."""
+    scheme, separator, token = auth_header.partition(" ")
+    if separator and scheme.lower() == "bearer" and token.strip():
+        return token.strip()
+    return None
 
 
 class CSRFMiddleware(BaseHTTPMiddleware):
@@ -101,36 +111,24 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                 return await call_next(request)
 
         # 4. Skip Bearer token requests (not vulnerable to CSRF)
-        auth_header = request.headers.get("authorization", "")
-        if auth_header.startswith("Bearer "):
+        auth_header = get_auth_header_value(request.headers) or ""
+        if _extract_bearer_token(auth_header):
             return await call_next(request)
 
-        # 5. Extract CSRF token from header or form field
+        # Admin UI uses an existing double-submit CSRF cookie/header pair for
+        # same-origin mutations, including a few routes outside /admin.
+        admin_csrf_cookie = request.cookies.get(ADMIN_CSRF_COOKIE_NAME)
+        admin_csrf_header = request.headers.get(ADMIN_CSRF_HEADER_NAME)
+        if isinstance(admin_csrf_cookie, str) and isinstance(admin_csrf_header, str) and admin_csrf_cookie and admin_csrf_header:
+            # Standard
+            import hmac
+
+            if hmac.compare_digest(admin_csrf_header, admin_csrf_cookie):
+                return await call_next(request)
+
+        # 5. Extract CSRF token from header. Do not consume form bodies here:
+        # BaseHTTPMiddleware cannot safely replay request bodies for downstream handlers.
         csrf_token = request.headers.get(settings.csrf_token_name)
-
-        # If header is missing, try to parse form field (for classic HTML form submits)
-        if not csrf_token:
-            content_type = request.headers.get("content-type", "")
-
-            # Parse application/x-www-form-urlencoded
-            if "application/x-www-form-urlencoded" in content_type:
-                try:
-                    body = await request.body()
-                    # Standard
-                    from urllib.parse import parse_qs
-
-                    form_data = parse_qs(body.decode("utf-8"))
-                    csrf_token = form_data.get("csrf_token", [None])[0]
-                except Exception as e:
-                    logger.error(f"Failed to parse form data for CSRF token: {e}")
-
-            # Parse multipart/form-data
-            elif "multipart/form-data" in content_type:
-                try:
-                    async with request.form() as form:
-                        csrf_token = form.get("csrf_token")
-                except Exception as e:
-                    logger.error(f"Failed to parse multipart form data for CSRF token: {e}")
 
         if not csrf_token:
             logger.warning(f"CSRF token missing for {request.method} {request.url.path}")
@@ -154,9 +152,8 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         if not user_id or not session_id:
             raw_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
             if not raw_token:
-                auth_header = request.headers.get("authorization", "")
-                if auth_header.startswith("Bearer "):
-                    raw_token = auth_header.split(" ", 1)[1].strip()
+                auth_header = get_auth_header_value(request.headers) or ""
+                raw_token = _extract_bearer_token(auth_header)
 
             if raw_token:
                 try:

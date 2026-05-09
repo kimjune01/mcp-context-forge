@@ -616,8 +616,8 @@ async def test_csrf_fallback_jwt_verification_failure_returns_403():
 
 
 @pytest.mark.asyncio
-async def test_csrf_form_token_with_jwt_fallback_and_double_submit_succeeds():
-    """Form token extraction + cookie match + JWT fallback context should pass."""
+async def test_csrf_form_post_without_header_is_rejected_without_consuming_body():
+    """Form posts must use the CSRF header so middleware does not consume bodies."""
     middleware = CSRFMiddleware(app=AsyncMock())
     call_next = AsyncMock(return_value=Response("ok", status_code=200))
 
@@ -649,6 +649,7 @@ async def test_csrf_form_token_with_jwt_fallback_and_double_submit_succeeds():
 
         response = await middleware.dispatch(request, call_next)
 
-    assert response.status_code == 200
-    mock_csrf_service.validate_csrf_token.assert_called_once_with("valid_token", "admin@example.com", "session-jti-2")
-    call_next.assert_awaited_once_with(request)
+    assert response.status_code == 403
+    request.body.assert_not_awaited()
+    mock_csrf_service.validate_csrf_token.assert_not_called()
+    call_next.assert_not_awaited()

@@ -21736,7 +21736,7 @@ class TestAdminCsrfProtection:
         request = MagicMock()
         request.scope = {"root_path": "/mounted"}
 
-        assert admin_mod._admin_cookie_path(request) == "/mounted/admin"
+        assert admin_mod._admin_cookie_path(request) == "/mounted"
 
     def test_admin_cookie_path_falls_back_to_settings_root_path(self, monkeypatch):
         # First-Party
@@ -21746,7 +21746,7 @@ class TestAdminCsrfProtection:
         request = MagicMock()
         request.scope = {"root_path": ""}
 
-        assert admin_mod._admin_cookie_path(request) == "/api/proxy/mcp/admin"
+        assert admin_mod._admin_cookie_path(request) == "/api/proxy/mcp"
 
     def test_admin_cookie_path_normalizes_settings_root_path(self, monkeypatch):
         # First-Party
@@ -21756,7 +21756,7 @@ class TestAdminCsrfProtection:
         request = MagicMock()
         request.scope = {"root_path": ""}
 
-        assert admin_mod._admin_cookie_path(request) == "/api/proxy/mcp/admin"
+        assert admin_mod._admin_cookie_path(request) == "/api/proxy/mcp"
 
     def test_admin_cookie_path_returns_default_when_both_scope_and_settings_empty(self, monkeypatch):
         # First-Party
@@ -21766,7 +21766,7 @@ class TestAdminCsrfProtection:
         request = MagicMock()
         request.scope = {"root_path": ""}
 
-        assert admin_mod._admin_cookie_path(request) == "/admin"
+        assert admin_mod._admin_cookie_path(request) == "/"
 
     def test_admin_cookie_path_strips_trailing_slash_from_scope_root_path(self, monkeypatch):
         # First-Party
@@ -21776,7 +21776,7 @@ class TestAdminCsrfProtection:
         request = MagicMock()
         request.scope = {"root_path": "/mounted/"}
 
-        assert admin_mod._admin_cookie_path(request) == "/mounted/admin"
+        assert admin_mod._admin_cookie_path(request) == "/mounted"
 
 
 # ---------------------------------------------------------------------------
