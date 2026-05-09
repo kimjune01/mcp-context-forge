@@ -424,7 +424,7 @@ class Settings(BaseSettings):
     csrf_enabled: bool = Field(default=True, description="Enable CSRF protection for state-changing operations")
     csrf_secret_key: str = Field(default="", description="Secret key for CSRF token generation (falls back to jwt_secret_key if empty)")
     csrf_token_name: str = Field(default="X-CSRF-Token", description="HTTP header name for CSRF token")
-    csrf_cookie_name: str = Field(default="csrf_token", description="Cookie name for CSRF token")
+    csrf_cookie_name: str = Field(default="mcpgateway_csrf_token", description="Cookie name for CSRF token")
     csrf_token_expiry: int = Field(default=3600, description="CSRF token expiration time in seconds")
     csrf_cookie_secure: bool = Field(default=True, description="Set Secure flag on CSRF cookie (HTTPS only)")
     csrf_cookie_samesite: str = Field(default="Strict", description="SameSite attribute for CSRF cookie (Strict, Lax, or None)")
