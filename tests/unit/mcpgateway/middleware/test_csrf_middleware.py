@@ -64,7 +64,7 @@ async def test_head_request_passes_without_token():
 
 @pytest.mark.asyncio
 async def test_post_without_token_returns_403():
-    """Test that POST without CSRF token returns 403 with CSRF_TOKEN_MISSING."""
+    """Test that POST without CSRF token returns 403 with CSRF_TOKEN_INVALID."""
     middleware = CSRFMiddleware(app=AsyncMock())
     call_next = AsyncMock(return_value=Response("ok", status_code=200))
 
@@ -81,7 +81,7 @@ async def test_post_without_token_returns_403():
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 403
-    assert response.body == b'{"detail":"CSRF token missing","code":"CSRF_TOKEN_MISSING"}'
+    assert response.body == b'{"detail":"CSRF validation failed","code":"CSRF_TOKEN_INVALID"}'
     call_next.assert_not_awaited()
 
 
@@ -114,7 +114,7 @@ async def test_post_with_invalid_token_returns_403():
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 403
-    assert response.body == b'{"detail":"CSRF token invalid hmac issue","code":"CSRF_TOKEN_INVALID"}'
+    assert response.body == b'{"detail":"CSRF validation failed","code":"CSRF_TOKEN_INVALID"}'
     call_next.assert_not_awaited()
 
 
@@ -346,7 +346,7 @@ async def test_no_user_context_returns_403():
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 403
-    assert response.body == b'{"detail":"CSRF token invalid user_id and session_is do not match","code":"CSRF_TOKEN_INVALID"}'
+    assert response.body == b'{"detail":"CSRF validation failed","code":"CSRF_TOKEN_INVALID"}'
     call_next.assert_not_awaited()
 
 
@@ -369,7 +369,7 @@ async def test_put_request_requires_csrf_token():
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 403
-    assert response.body == b'{"detail":"CSRF token missing","code":"CSRF_TOKEN_MISSING"}'
+    assert response.body == b'{"detail":"CSRF validation failed","code":"CSRF_TOKEN_INVALID"}'
 
 
 @pytest.mark.asyncio
@@ -391,7 +391,7 @@ async def test_delete_request_requires_csrf_token():
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 403
-    assert response.body == b'{"detail":"CSRF token missing","code":"CSRF_TOKEN_MISSING"}'
+    assert response.body == b'{"detail":"CSRF validation failed","code":"CSRF_TOKEN_INVALID"}'
 
 
 @pytest.mark.asyncio
@@ -413,7 +413,7 @@ async def test_patch_request_requires_csrf_token():
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 403
-    assert response.body == b'{"detail":"CSRF token missing","code":"CSRF_TOKEN_MISSING"}'
+    assert response.body == b'{"detail":"CSRF validation failed","code":"CSRF_TOKEN_INVALID"}'
 
 
 @pytest.mark.asyncio
@@ -611,7 +611,7 @@ async def test_csrf_fallback_jwt_verification_failure_returns_403():
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 403
-    assert response.body == b'{"detail":"CSRF token invalid user_id and session_is do not match","code":"CSRF_TOKEN_INVALID"}'
+    assert response.body == b'{"detail":"CSRF validation failed","code":"CSRF_TOKEN_INVALID"}'
     call_next.assert_not_awaited()
 
 

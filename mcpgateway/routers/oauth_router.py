@@ -48,11 +48,36 @@ ADMIN_CSRF_HEADER_NAME = "x-csrf-token"
 
 
 async def enforce_fetch_tools_csrf(request: Request) -> None:
-    """Validate admin CSRF token for OAuth fetch-tools mutations."""
+    """Validate admin CSRF token for OAuth fetch-tools mutations.
+
+    Also enforces same-origin via Origin/Referer header check to prevent
+    cross-site request forgery on this state-changing endpoint.
+    """
     auth_header = get_auth_header_value(request.headers) or ""
     scheme, separator, token = auth_header.partition(" ")
     if separator and scheme.lower() == "bearer" and token.strip():
         return
+
+    # Same-origin check: require Origin or Referer to match app domain
+    origin = request.headers.get("origin")
+    referer = request.headers.get("referer")
+    candidate = origin
+    if not candidate and referer:
+        try:
+            parsed = urlparse(referer)
+            if parsed.scheme and parsed.netloc:
+                candidate = f"{parsed.scheme}://{parsed.netloc}"
+        except Exception:
+            candidate = None
+    if candidate:
+        app_domain = str(settings.app_domain)
+        parsed_app = urlparse(app_domain)
+        app_origin = f"{parsed_app.scheme}://{parsed_app.netloc}"
+        allowed = {app_origin}
+        allowed.update(settings.csrf_trusted_origins)
+        if candidate not in allowed:
+            raise HTTPException(status_code=403, detail="CSRF validation failed")
+    # If no Origin/Referer, fall through to cookie check (callback flow)
 
     csrf_cookie = request.cookies.get(ADMIN_CSRF_COOKIE_NAME)
     csrf_header = request.headers.get(ADMIN_CSRF_HEADER_NAME)

@@ -10,6 +10,7 @@ Cross-Site Request Forgery attacks.
 """
 
 # Standard
+import hmac
 import logging
 from typing import Callable
 from urllib.parse import urlparse
@@ -28,8 +29,6 @@ logger = logging.getLogger(__name__)
 
 # Safe HTTP methods that don't require CSRF protection
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
-ADMIN_CSRF_COOKIE_NAME = "mcpgateway_csrf_token"
-ADMIN_CSRF_HEADER_NAME = "x-csrf-token"
 
 
 def _extract_bearer_token(auth_header: str) -> str | None:
@@ -115,24 +114,13 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         if _extract_bearer_token(auth_header):
             return await call_next(request)
 
-        # Admin UI uses an existing double-submit CSRF cookie/header pair for
-        # same-origin mutations, including a few routes outside /admin.
-        admin_csrf_cookie = request.cookies.get(ADMIN_CSRF_COOKIE_NAME)
-        admin_csrf_header = request.headers.get(ADMIN_CSRF_HEADER_NAME)
-        if isinstance(admin_csrf_cookie, str) and isinstance(admin_csrf_header, str) and admin_csrf_cookie and admin_csrf_header:
-            # Standard
-            import hmac
-
-            if hmac.compare_digest(admin_csrf_header, admin_csrf_cookie):
-                return await call_next(request)
-
         # 5. Extract CSRF token from header. Do not consume form bodies here:
         # BaseHTTPMiddleware cannot safely replay request bodies for downstream handlers.
         csrf_token = request.headers.get(settings.csrf_token_name)
 
         if not csrf_token:
             logger.warning(f"CSRF token missing for {request.method} {request.url.path}")
-            return JSONResponse(status_code=403, content={"detail": "CSRF token missing", "code": "CSRF_TOKEN_MISSING"})
+            return JSONResponse(status_code=403, content={"detail": "CSRF validation failed", "code": "CSRF_TOKEN_INVALID"})
 
         # 6. Get user_id and session_id from authenticated session
         user_id = None
@@ -166,7 +154,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         # If no user context or session binding, we can't validate the token
         if not user_id or not session_id:
             logger.warning(f"CSRF validation failed: no user context for {request.method} {request.url.path}")
-            return JSONResponse(status_code=403, content={"detail": "CSRF token invalid user_id and session_is do not match", "code": "CSRF_TOKEN_INVALID"})
+            return JSONResponse(status_code=403, content={"detail": "CSRF validation failed", "code": "CSRF_TOKEN_INVALID"})
 
         # 7. Double-submit cookie validation: compare cookie token with header/form token
         cookie_name = getattr(settings, "csrf_cookie_name", "csrf_token")
@@ -174,21 +162,18 @@ class CSRFMiddleware(BaseHTTPMiddleware):
 
         if not cookie_token:
             logger.warning(f"CSRF cookie missing for {request.method} {request.url.path}")
-            return JSONResponse(status_code=403, content={"detail": "CSRF token invalid, no cookie token", "code": "CSRF_TOKEN_INVALID"})
+            return JSONResponse(status_code=403, content={"detail": "CSRF validation failed", "code": "CSRF_TOKEN_INVALID"})
 
         # Constant-time comparison to prevent timing attacks
-        # Standard
-        import hmac
-
         if not hmac.compare_digest(csrf_token, cookie_token):
             logger.warning("CSRF double-submit validation failed: cookie and header/form tokens do not match")
-            return JSONResponse(status_code=403, content={"detail": "CSRF token invalid, time issue", "code": "CSRF_TOKEN_INVALID"})
+            return JSONResponse(status_code=403, content={"detail": "CSRF validation failed", "code": "CSRF_TOKEN_INVALID"})
 
         # 8. Validate CSRF token HMAC
         csrf_service = get_csrf_service()
         if not csrf_service.validate_csrf_token(csrf_token, user_id, session_id):
             logger.warning(f"CSRF token HMAC validation failed for user {user_id}")
-            return JSONResponse(status_code=403, content={"detail": "CSRF token invalid hmac issue", "code": "CSRF_TOKEN_INVALID"})
+            return JSONResponse(status_code=403, content={"detail": "CSRF validation failed", "code": "CSRF_TOKEN_INVALID"})
 
         # 9. Check Referer/Origin if configured (fail-closed: reject if missing)
         if settings.csrf_check_referer:
@@ -197,7 +182,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             # Fail closed: reject if header is missing
             if not referer:
                 logger.warning(f"CSRF referer check failed: Referer/Origin header missing for {request.method} {request.url.path}")
-                return JSONResponse(status_code=403, content={"detail": "CSRF token invalid origin header issue", "code": "CSRF_TOKEN_INVALID"})
+                return JSONResponse(status_code=403, content={"detail": "CSRF validation failed", "code": "CSRF_TOKEN_INVALID"})
 
             # Parse the referer/origin
             parsed_referer = urlparse(referer)
@@ -214,7 +199,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             # Check if referer matches allowed origins
             if referer_origin not in allowed_origins:
                 logger.warning(f"CSRF referer check failed: {referer_origin} not in allowed origins for {request.method} {request.url.path}")
-                return JSONResponse(status_code=403, content={"detail": "CSRF token invalid allowed origin issue", "code": "CSRF_TOKEN_INVALID"})
+                return JSONResponse(status_code=403, content={"detail": "CSRF validation failed", "code": "CSRF_TOKEN_INVALID"})
 
-        # 9. All checks passed, continue with request
+        # 10. All checks passed, continue with request
         return await call_next(request)
