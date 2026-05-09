@@ -11592,9 +11592,10 @@ else:
 if settings.mcpgateway_admin_api_enabled and settings.siem_export_enabled:
     try:
         # First-Party
+        from mcpgateway.admin import enforce_admin_csrf  # pylint: disable=import-outside-toplevel
         from mcpgateway.routers.siem import router as siem_router
 
-        app.include_router(siem_router)
+        app.include_router(siem_router, dependencies=[Depends(enforce_admin_csrf)])
         logger.info("SIEM router included")
     except ImportError as e:  # pragma: no cover - optional import guard
         logger.warning(f"SIEM router not available: {e}")
@@ -11735,10 +11736,11 @@ if settings.llmchat_enabled:
         from mcpgateway.routers.llm_admin_router import llm_admin_router
         from mcpgateway.routers.llm_config_router import llm_config_router
         from mcpgateway.routers.llm_proxy_router import llm_proxy_router
+        from mcpgateway.admin import enforce_admin_csrf  # pylint: disable=import-outside-toplevel
 
         app.include_router(llm_config_router, prefix="/llm", tags=["LLM Configuration"])
         app.include_router(llm_proxy_router, prefix=settings.llm_api_prefix, tags=["LLM Proxy"])
-        app.include_router(llm_admin_router, prefix="/admin/llm", tags=["LLM Admin"])
+        app.include_router(llm_admin_router, prefix="/admin/llm", tags=["LLM Admin"], dependencies=[Depends(enforce_admin_csrf)])
         logger.info("LLM configuration, proxy, and admin routers included")
     except ImportError as e:
         logger.debug(f"LLM routers not available: {e}")
@@ -11779,7 +11781,7 @@ if ADMIN_API_ENABLED:
     # Lazy import: mcpgateway.admin is a large module (~19k lines, ~120ms cold).
     # Only load it when the admin API is actually mounted.
     # First-Party
-    from mcpgateway.admin import admin_router, set_logging_service, validate_section_permissions  # pylint: disable=import-outside-toplevel
+    from mcpgateway.admin import admin_router, enforce_admin_csrf, set_logging_service, validate_section_permissions  # pylint: disable=import-outside-toplevel
 
     set_logging_service(logging_service)
     app.include_router(admin_router)  # Admin routes imported from admin.py
@@ -11791,7 +11793,7 @@ if ADMIN_API_ENABLED:
     # First-Party
     from mcpgateway.routers.runtime_admin_router import runtime_admin_router  # pylint: disable=import-outside-toplevel
 
-    app.include_router(runtime_admin_router, prefix="/admin/runtime", tags=["Runtime Admin"])
+    app.include_router(runtime_admin_router, prefix="/admin/runtime", tags=["Runtime Admin"], dependencies=[Depends(enforce_admin_csrf)])
 else:
     logger.warning("Admin API routes not mounted - Admin API disabled via MCPGATEWAY_ADMIN_API_ENABLED=False")
 
